@@ -1,3 +1,0 @@
-/home/timelock/Dokumenty/Semestr 6/Rozprochy/token_ring/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/home/timelock/Dokumenty/Semestr 6/Rozprochy/token_ring/cmake-build-debug/CMakeFiles/edit_cache.dir
-/home/timelock/Dokumenty/Semestr 6/Rozprochy/token_ring/cmake-build-debug/CMakeFiles/main.dir
