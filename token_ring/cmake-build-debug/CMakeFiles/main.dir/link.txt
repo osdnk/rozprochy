@@ -1,1 +1,1 @@
-/usr/bin/c++  -g   CMakeFiles/main.dir/main.cpp.o CMakeFiles/main.dir/TCP_client.cpp.o CMakeFiles/main.dir/TokenRingUtils.cpp.o CMakeFiles/main.dir/Token.cpp.o  -o main -lWS2_32.lib 
+/usr/bin/c++  -g   CMakeFiles/main.dir/main.cpp.o CMakeFiles/main.dir/TCP_client.cpp.o CMakeFiles/main.dir/TokenRingUtils.cpp.o CMakeFiles/main.dir/Token.cpp.o  -o main 

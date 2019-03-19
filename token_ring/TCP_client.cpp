@@ -2,47 +2,46 @@
 
 //we initialize the clients to be listening on localhost: port numbers are essentially arbitrarily chosen
 #include <zconf.h>
+#include <cstring>
+#include <arpa/inet.h>
 #include "TCP_client.hpp"
-
 
 TCP_client::TCP_client(int port_number, int next_port, std::string identifier) {
     id = identifier;
     initialize_sockets(port_number, next_port);
     //this needs to change when neighbor is shut down -> token of type (TOK_SHUTDOWN)
     my_listening_port = port_number;
+    neighbor_port = next_port;
+    token_buffer = (token *) malloc(sizeof(token));
+    want_to_send = false;
     hello_protocol(port_number == next_port);
     std::cout << "Client has initialized succesfully" << std::endl;
-    TCP_client::run();
+    TCP_client::run(port_number == next_port);
 }
 
-void TCP_client::run() {
-    //accept connection and receive tokens in a loop
-
-    SOCKET predecessor_socket = accept_connection();
-
-    std::cout << "[DEBUG]: Connection accepted" << std::endl;
-    //Run endless loop
+void TCP_client::run(bool initial_client) {
+    //accept connection and receive/send tokens in a loop
     do {
-        //TODO -> instead of sleep, try blocking recv
-        int received_bytes = recv( predecessor_socket, (char *) token_buffer, sizeof(token), 0);
-        if (received_bytes < 0) {
-            //connection lost. need to re-enter the connection//try to reconnect?
-            std::cout << "Error receiving the data. Reason: " << WSAGetLastError() << std::endl;
-            sleep(1);
+        // we need to wait for situation when we have someone to send to
+        // if we are initial client, we must send the first MSG token
+        bool has_peers = !all_peers.empty();
+        if (initial_client && has_peers) {
+            std::cout << "[DEBUG]: Sending initial MSG token" << std::endl;
+            initial_client = false;
+            send_random_message();
+        }
 
-        } else {
-            //Here begins Processing of the received token
-            std::cout << "I have received the token: " << received_bytes << std::endl;
-            if (token_buffer->type == TOK_INIT)
-                process_new_client();
-            else if (token_buffer->type == TOK_MSG && token_buffer->get_dest() == id)
-                process_my_msg();
-            else if (token_buffer->type == TOK_MSG && token_buffer->get_dest() != id)
-                process_not_my_msg();
-            else {
-                std::cout << id << "Has received unrecognised token type from " << token_buffer->get_source()
-                          << std::endl;
-            }
+        SOCKET predecessor_socket = accept_connection();
+        receive_token(predecessor_socket);
+        //Passflag case -> we need to just pass the token
+        //Second is a very special case for when token needs to
+        if (passflag || (!passflag && !want_to_send && token_buffer->type != TOK_INIT)) {
+            passflag = false;
+            std::cout << "[DEBUG]: Passing the token to neighbour" << std::endl;
+            randomize_need_to_send();
+            send_token();
+        } else if (want_to_send && token_buffer->is_free && has_peers) {
+            send_random_message();
         }
 
     } while (true);
@@ -72,39 +71,81 @@ void TCP_client::initialize_sockets(int port_number, int neighbor_port) {
 //The client when initialized becomes last, and it's his responsibility to connect to the new client from "the back"
 void TCP_client::hello_protocol(bool first_client) {
 
-    if (first_client) {
-        // we don't need now the initialization procedure, because we are the first client.
-        last_client = true;
-        return;
-    } else {
-        //TODO -> Connect from the other side to my predecessor to receive messages
-
+    if (!first_client) {
         //Destination is same as source - because the token must return to me.
-        // We send our port number as message content's so we become neighbor
-        token_buffer = new token(TOK_INIT, id, id, std::to_string(my_listening_port));
+        // We send our port number and our desired neighbor port, so predecessor of our new neighbor can adapt,
+        // and change the neighbor to us.
+        // So format is line old_listening:new_listening
+
+        token_buffer = new token(TOK_INIT, id, id,
+                                 std::to_string(neighbor_port) + ":" + std::to_string(my_listening_port));
         // we have to send the token to each client (round the circle), to let them know that we are in
         send_token();
         std::cout << "Hello sent. Waiting for response from peers." << std::endl;
-        //after sending token, we try to run.
-        run();
-
-
+        //after sending token, we try to run (not as initial client).
+        run(false);
     }
 
 }
 
 void TCP_client::send_token() {
+    //one second delay, because client must hold the token 1s before sending it.
+    if (token_buffer->type == TOK_MSG)
+        sleep(1);
     // connect and send
+    socket_out = init_tcp_socket();
+    //todo -> make this a blocking call somehow?
     while (connect(socket_out, (sockaddr *) &neighbor_address, sizeof(sockaddr)) == SOCKET_ERROR) {
+        sleep(1);
         std::cout << "Failed to connect " << std::endl;
+        perror("Reason: ");
     }
-    std::cout << "[DEBUG]: Connected to " << neighbor_address.sin_port << std::endl;
+//    std::cout << "[DEBUG]: Connected to " << neighbor_address.sin_port << std::endl;
 
-    int bytes_sent = send(socket_out, (char *) token_buffer, sizeof(token), 0);
+    ssize_t bytes_sent = send(socket_out, (char *) token_buffer, sizeof(token), 0);
 
-    std::cout << bytes_sent << " bytes sent to: " << neighbor_address.sin_port << std::endl;
-
+//    std::cout << "[DEBUG]: Token of type " << (token_buffer->type == TOK_INIT ? "TOK_INIT" : "TOK_MSG") << " sent"
+//              << std::endl
+    close(socket_out);
 }
+
+void TCP_client::receive_token(SOCKET from) {
+
+    ssize_t received_bytes = recv(from, (char *) token_buffer, sizeof(token), 0);
+    if (received_bytes < 0) {
+        //connection lost
+        std::cout << "Error receiving the data.";
+        perror("Reason: ");
+        std::cout << std::endl;
+        //retry after 1s
+        sleep(1);
+
+    } else {
+        //Here begins Processing of the received token
+        std::cout << "[DEBUG]: I have received the token." << std::endl;
+        std::string source = token_buffer->get_source();
+        std::string dest = token_buffer->get_dest();
+        token_type message_type = token_buffer->type;
+
+        if (source != id && !has_peer(source) && !source.empty())
+            add_peer(source);
+
+
+        if (message_type == TOK_INIT)
+            process_new_client();
+        else if (message_type == TOK_MSG && dest == id && !dest.empty())
+            process_my_msg();
+        else if (message_type == TOK_MSG && dest != id && !dest.empty())
+            process_not_my_msg();
+        else if (dest.empty())
+            passflag = false;
+        else {
+            std::cout << id << "Has received unrecognised token type from " << token_buffer->get_source()
+                      << std::endl;
+        }
+    }
+}
+
 
 SOCKET TCP_client::accept_connection() {
     //Listen on our listening port for approaching clients
@@ -115,45 +156,102 @@ SOCKET TCP_client::accept_connection() {
     //accept connections incoming on our listening port.
     SOCKET client_socket;
     do {
-        std::cout << "[DEBUG]: Waiting for connection on port: " << my_listening_port << std::endl;
+//        std::cout << "[DEBUG]: Waiting for connection on port: " << my_listening_port << std::endl;
         client_socket = accept(socket_in, nullptr, nullptr);
     } while (client_socket == SOCKET_ERROR);
     return client_socket;
 }
 
-void TCP_client::set_neighbor_port(int neighbor_port) {
-
+void TCP_client::set_neighbor_port(int neigh_port) {
+    std::cout << "[DEBUG]: Changing neighbor port to: " << neigh_port << std::endl;
     memset(&neighbor_address, 0, sizeof(neighbor_address));
     neighbor_address.sin_family = AF_INET;
     neighbor_address.sin_addr.s_addr = inet_addr("127.0.0.1");
-    neighbor_address.sin_port = htons((u_short) neighbor_port);
+    neighbor_address.sin_port = htons((u_short) neigh_port);
+    neighbor_port = neigh_port;
 
 }
 
-//TODO -> implement here adding new peers in tokenring
+//Method sets passflag for the TOK_INIT token currently processed
 void TCP_client::process_new_client() {
-    if (last_client) {
-        //explanation: Payload in init token is listening port of new client.
-        //Because we are the last client connected,
-        //we have to connect to new client and confirm him by sending token_init back to him
-        set_neighbor_port(std::stoi(token_buffer->get_payload()));
-        last_client = false;
-        send_token();
-    } else if (token_buffer->get_source() == id) {
-        //it is our token returning to us. we do not send it back.
-        last_client = true;
-
+    std::string payload = token_buffer->get_payload();
+    int old_port = std::stoi(split(payload, ":")[0]);
+    int new_port = std::stoi(split(payload, ":")[1]);
+    if (token_buffer->get_source() == id) {
+        //it is our token returning to us. we do not send it back. it is end of hello protocol.
+        std::cout << "[DEBUG]: " << id << ": My own init messsage returned to me." << std::endl;
+        passflag = false;
+    } else if (neighbor_port == old_port) {
+        //explanation: Payload in init token is old:new ports mapping
+        set_neighbor_port(new_port);
+        passflag = true;
     } else {
-        // here we are not the last client, so we just pass the token
-        send_token();
+        // here we just pass the token through
+        passflag = true;
     }
 }
 
-//TODO implement both
 void TCP_client::process_my_msg() {
-    std::cout << "got my msg" << std::endl;
+    std::cout << "[DEBUG]: Client of id " << id << " has received message from " + token_buffer->get_source()
+              << std::endl << "Contents: " << token_buffer->get_payload() << std::endl;
+    //We have received our message.
+    //Pass the token (passflag), and make it free
+    token_buffer->is_free = true;
+    token_buffer->set_dest("");
+    token_buffer->set_source("");
+    passflag = true;
+
 }
 
 void TCP_client::process_not_my_msg() {
-    std::cout << "got not my msg" << std::endl;
+    //If we are the source, make the token free.
+    //Set passflag to false -> because we
+    if (token_buffer->get_source() == id) {
+        token_buffer->is_free = true;
+        token_buffer->set_dest("");
+        passflag = false;
+    } else {
+        passflag = true;
+    }
+
+}
+
+void TCP_client::add_peer(std::string peer_id) {
+    std::cout << "[DEBUG]: Adding peer " << peer_id << " to my possible destinations" << std::endl;
+    all_peers.push_back(peer_id);
+}
+
+
+void TCP_client::randomize_need_to_send() {
+    //Randomly make it true
+    if (rand() % 10 == 0)
+        want_to_send = true;
+
+}
+
+void TCP_client::send_random_message() {
+    //make the token taken
+    delete token_buffer;
+    std::string dest = get_random_destination();
+    std::string msg = "to nie ma tak ze dobrze czy niedobrze";
+    token_buffer = new token(TOK_MSG, id, dest, msg);
+    token_buffer->is_free = false;
+    want_to_send = false;
+    send_token();
+    std::cout << "[DEBUG]: Client of id " << id << " has sent message to " << dest << std::endl;
+}
+
+std::string TCP_client::get_random_destination() {
+    //TODO -> empty case should not happen here (theoretically)
+    int index = static_cast<int>( all_peers.empty() ? 0 : rand() % all_peers.size());
+    std::cout << "[DEBUG]: Getting random destination from list: " << all_peers.at(index) << std::endl;
+    return all_peers.at(index);
+}
+
+bool TCP_client::has_peer(std::string peer) {
+    for (const auto &all_peer : all_peers) {
+        if (all_peer == peer)
+            return true;
+    }
+    return false;
 }
