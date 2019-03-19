@@ -4,6 +4,7 @@
 #include <zconf.h>
 #include <cstring>
 #include <arpa/inet.h>
+#include <ctime>
 #include "TCP_client.hpp"
 
 TCP_client::TCP_client(int port_number, int next_port, std::string identifier) {
@@ -64,6 +65,10 @@ void TCP_client::initialize_sockets(int port_number, int neighbor_port) {
     if (socket_in == INVALID_SOCKET) {
         exit(1);
     }
+    //initialize UDP multicast socket
+
+    initialize_multicast();
+
 
 }
 
@@ -123,6 +128,7 @@ void TCP_client::receive_token(SOCKET from) {
     } else {
         //Here begins Processing of the received token
         std::cout << "[DEBUG]: I have received the token." << std::endl;
+        log();
         std::string source = token_buffer->get_source();
         std::string dest = token_buffer->get_dest();
         token_type message_type = token_buffer->type;
@@ -199,6 +205,8 @@ void TCP_client::process_my_msg() {
     token_buffer->is_free = true;
     token_buffer->set_dest("");
     token_buffer->set_source("");
+    token_buffer->set_payload("");
+
     passflag = true;
 
 }
@@ -254,4 +262,32 @@ bool TCP_client::has_peer(std::string peer) {
             return true;
     }
     return false;
+}
+
+void TCP_client::log() {
+
+
+    std::string log_line = "[" + std::to_string(std::time(0)) + "]: " + id + " has received token" +
+                           (token_buffer->type == TOK_INIT ? " TOK_INIT " : " TOK_MSG ") + "with contents: " +
+                           token_buffer->get_payload() + " from:" + token_buffer->get_source() + "\n";
+
+
+    const char* log_line_cstr = log_line.c_str();
+
+    if(sendto(multicast_socket, log_line_cstr,strlen(log_line_cstr)*sizeof(char), 0,
+              (const sockaddr *)(&multicast_address), sizeof(multicast_address))<0){
+        std::cout<<"[DEBUG]: Sending multicast log went wrong." << std::endl;
+        exit(1);
+    }
+}
+
+void TCP_client::initialize_multicast() {
+    //make socket
+    if((multicast_socket = init_udp_socket()) == INVALID_SOCKET){
+        exit(1);
+    }
+    multicast_address.sin_family = AF_INET;
+    multicast_address.sin_addr.s_addr = inet_addr(multicast_ip.c_str());
+    multicast_address.sin_port = htons((uint16_t) multicast_port);
+
 }

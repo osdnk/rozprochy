@@ -14,6 +14,7 @@ class TCP_client {
 private:
     SOCKET socket_in;
     SOCKET socket_out;
+    SOCKET multicast_socket;
     sockaddr_in neighbor_address;
     int neighbor_port;
     int my_listening_port;
@@ -23,9 +24,15 @@ private:
     std::vector<std::string> all_peers;
 
 
+
+    const std::string multicast_ip = "239.0.0.1";
+    const int multicast_port = 3000;
+    sockaddr_in multicast_address;
+
     token *token_buffer;
 
     void initialize_sockets(int port_number, int neighbor_port);
+    void initialize_multicast();
     void hello_protocol(bool first_client);
     void send_token();
     void receive_token(SOCKET from);
@@ -39,6 +46,7 @@ private:
     void send_random_message();
     std::string get_random_destination();
     bool has_peer(std::string peer);
+    void log();
 public:
 
     // if neighbor_port == port_number -> this means that essentially we are the first client
