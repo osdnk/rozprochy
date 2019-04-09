@@ -1,37 +1,11 @@
-require 'bunny'
-require 'securerandom'
-class Doctor
+require './slave'
+class Doctor < Slave
 
   private
 
   def initialize(name: nil)
-    set_name name
-    connect_bunny
-    subscribe_info
+    super(name: name)
     subscribe_responses
-  end
-
-  def set_name(name)
-    @name = name if name.class == String
-    @name = @name || SecureRandom.hex
-  end
-
-  def connect_bunny
-    @connection = Bunny.new
-    @connection.start
-    @channel = @connection.create_channel
-    @send_exchange = @channel.direct('senders_exchange')
-    @response_exchange = @channel.direct('response_exchange')
-    @info_exchange = @channel.fanout('info_exchange')
-    @log_exchange = @channel.fanout('log_exchange')
-  end
-
-  def subscribe_info
-    @info_queue = @channel.queue('', exclusive: true)
-    @info_queue.bind(@info_exchange)
-    @info_queue.subscribe(block:false) do |_delivery_info, _properties, body|
-      puts "#{body}"
-    end
   end
 
   def subscribe_responses
@@ -42,6 +16,7 @@ class Doctor
     #Subscribe on responses (nonblock)
     @response_queue.subscribe(block: false) do |_delivery_info, _properties, body|
       puts "Received response: #{body}"
+      #Send out logs to administrator's fanout
       @log_exchange.publish("#{@name} HAS RECEIVED: #{body}")
     end
   end
@@ -53,15 +28,14 @@ class Doctor
   end
 
 
-  def add_patient(patient_name: nil, illness: nil)
+  def dispatch_examination(patient_name: nil, illness: nil)
     if patient_name.nil? || illness.nil? || patient_name.empty? || illness.empty?
-      raise ArgumentError.new("Patient with blank name is not acceptable")
+      raise ArgumentError.new("Patient/Illness with blank name is not acceptable")
     end
     payload = "#{@name}-#{patient_name}-#{illness}"
     @send_exchange.publish(payload, routing_key: illness)
     @log_exchange.publish("#{@name} SENDING REQUEST: #{payload}, TO DIRECT WITH KEY: #{illness}")
     puts "Sent a test to run on #{patient_name}'s #{illness}"
-
   end
 
   def close
@@ -80,7 +54,7 @@ loop do
   name = STDIN.gets.chomp
   puts "Please enter the patient's illness"
   illness = STDIN.gets.chomp
-  doctor.add_patient(:patient_name => name, :illness => illness)
+  doctor.dispatch_examination(:patient_name => name, :illness => illness)
 rescue Interrupt => _e
   puts "Closing the connection with rabbitMQ, goodbye."
   doctor.close
