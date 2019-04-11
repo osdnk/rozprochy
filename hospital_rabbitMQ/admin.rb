@@ -48,6 +48,7 @@ class Admin
 
 end
 
+begin
 admin = Admin.new name: ARGV[0]
 puts admin.to_s
 
@@ -55,6 +56,8 @@ loop do
   puts "Please enter info to send:"
   message = STDIN.gets.chomp
   admin.send_info(message)
+end
+
 rescue Interrupt => _e
   puts "Closing the connection with rabbitMQ, goodbye."
   admin.close

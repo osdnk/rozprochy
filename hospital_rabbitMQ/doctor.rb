@@ -46,15 +46,16 @@ class Doctor < Slave
 end
 
 
+begin
 doctor = Doctor.new name: ARGV[0]
 puts doctor.to_s
-
 loop do
   puts "Please enter the patient's name"
   name = STDIN.gets.chomp
   puts "Please enter the patient's illness"
   illness = STDIN.gets.chomp
   doctor.dispatch_examination(:patient_name => name, :illness => illness)
+  end
 rescue Interrupt => _e
   puts "Closing the connection with rabbitMQ, goodbye."
   doctor.close
