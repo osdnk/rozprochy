@@ -1,25 +1,18 @@
-require './slave'
-class Doctor < Slave
+require './non_admin_employee'
+class Doctor < NonAdminEmployee
 
   private
 
-  def initialize(name: nil)
-    super(name: name)
-    subscribe_responses
-  end
-
-  def subscribe_responses
-    #create exclusive response queue
+  def initialize
+    super()
     @response_queue = @channel.queue('', exclusive: true)
-    #We bind the queue with our name's routing key
     @response_queue.bind(@response_exchange, routing_key: "#{@name}")
-    #Subscribe on responses (nonblock)
     @response_queue.subscribe(block: false) do |_delivery_info, _properties, body|
       puts "Received response: #{body}"
-      #Send out logs to administrator's fanout
-      @log_exchange.publish("#{@name} HAS RECEIVED: #{body}")
+      @log_exchange.publish("#{@name} received: #{body}")
     end
   end
+
 
   public
 
@@ -28,35 +21,25 @@ class Doctor < Slave
   end
 
 
-  def dispatch_examination(patient_name: nil, illness: nil)
-    if patient_name.nil? || illness.nil? || patient_name.empty? || illness.empty?
-      raise ArgumentError.new("Patient/Illness with blank name is not acceptable")
-    end
+  def send_examination(patient_name, illness)
     payload = "#{@name}-#{patient_name}-#{illness}"
     @send_exchange.publish(payload, routing_key: illness)
-    @log_exchange.publish("#{@name} SENDING REQUEST: #{payload}, TO DIRECT WITH KEY: #{illness}")
-    puts "Sent a test to run on #{patient_name}'s #{illness}"
+    @log_exchange.publish("#{@name}: #{payload}, with key: #{illness}")
+    puts "Sent a patient to technician to fix #{patient_name}'s #{illness}"
   end
-
-  def close
-    @connection.close
-    exit(0)
-  end
-
 end
 
 
 begin
-doctor = Doctor.new name: ARGV[0]
+doctor = Doctor.new
 puts doctor.to_s
 loop do
-  puts "Please enter the patient's name"
+  puts "PATIENT ID"
   name = STDIN.gets.chomp
-  puts "Please enter the patient's illness"
+  puts "PATIENT ILLNESS"
   illness = STDIN.gets.chomp
-  doctor.dispatch_examination(:patient_name => name, :illness => illness)
+  doctor.send_examination( name, illness)
   end
 rescue Interrupt => _e
-  puts "Closing the connection with rabbitMQ, goodbye."
   doctor.close
 end

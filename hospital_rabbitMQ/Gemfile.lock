@@ -6,6 +6,7 @@ GEM
       amq-protocol (~> 2.3, >= 2.3.0)
 
 PLATFORMS
+  ruby
   x64-mingw32
 
 DEPENDENCIES
