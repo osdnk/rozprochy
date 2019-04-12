@@ -1,13 +1,11 @@
 require 'bunny'
-class Admin
+require './employee'
+
+class Admin < Employee
 
   private
   def initialize
-    @connection = Bunny.new
-    @connection.start
-    @channel = @connection.create_channel
-    @log_exchange = @channel.fanout('log_exchange')
-    @info_exchange = @channel.fanout('info_exchange')
+    super()
     @logging_queue = @channel.queue('', exclusive: true)
     @logging_queue.bind(@log_exchange)
     @logging_queue.subscribe(block: false) do |_delivery_info, _properties, body|

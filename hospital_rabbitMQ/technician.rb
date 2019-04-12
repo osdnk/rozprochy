@@ -1,11 +1,19 @@
-require './non_admin_employee.rb'
+require './employee'
 
-class Technician < NonAdminEmployee
+
+class Technician < Employee
 
   private
 
   def initialize(skills: nil)
     super()
+
+    @info_queue = @channel.queue('', exclusive: true)
+    @info_queue.bind(@info_exchange)
+    @info_queue.subscribe(block:false) do |_delivery_info, _properties, body|
+      puts "#{body}"
+    end
+
     @skills = skills
     puts "#{self}"
 
@@ -23,7 +31,7 @@ class Technician < NonAdminEmployee
         requesting_doctor = body_splitted[0]
         response_msg = "#{body_splitted[1]}  #{delivery_info.routing_key} - done"
         puts "Start doing sth"
-        sleep(1)
+        sleep(7)
         puts "End doing sth"
         @response_exchange.publish(response_msg, routing_key: requesting_doctor)
         @log_exchange.publish("#{@name} sending: #{response_msg}")
@@ -41,7 +49,6 @@ class Technician < NonAdminEmployee
 end
 
 begin
-#Start running , Usage: First arg is name , and second/third are skills
   t = Technician.new(skills: ARGV)
   loop do
 

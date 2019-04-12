@@ -1,10 +1,18 @@
-require './non_admin_employee'
-class Doctor < NonAdminEmployee
+require './employee'
+class Doctor < Employee
 
   private
 
   def initialize
     super()
+
+    @info_queue = @channel.queue('', exclusive: true)
+    @info_queue.bind(@info_exchange)
+    @info_queue.subscribe(block:false) do |_delivery_info, _properties, body|
+      puts "#{body}"
+    end
+
+
     @response_queue = @channel.queue('', exclusive: true)
     @response_queue.bind(@response_exchange, routing_key: "#{@name}")
     @response_queue.subscribe(block: false) do |_delivery_info, _properties, body|
@@ -21,7 +29,7 @@ class Doctor < NonAdminEmployee
   end
 
 
-  def send_examination(patient_name, illness)
+  def send(patient_name, illness)
     payload = "#{@name}-#{patient_name}-#{illness}"
     @send_exchange.publish(payload, routing_key: illness)
     @log_exchange.publish("#{@name}: #{payload}, with key: #{illness}")
@@ -38,7 +46,7 @@ loop do
   name = STDIN.gets.chomp
   puts "PATIENT ILLNESS"
   illness = STDIN.gets.chomp
-  doctor.send_examination( name, illness)
+  doctor.send(name, illness)
   end
 rescue Interrupt => _e
   doctor.close
